@@ -9,33 +9,48 @@ const S = require('string');
 const Promise = require('promise');
 const Combinatorics = require('js-combinatorics');
 const Array = require("array");
+const mdl = require("../middleware/index");
 
-router.get('/getSocial', function (req, res, next) {
-  var lng = req.query.lang;
-  var srh = req.query.search;
-  var nks = req.query.networks;
+
+function handleResponse(res, code, data) {
+  var msg, cod;
+  switch (code) {
+    case 1:
+      cod = 1;
+      msg = "Los medios sociales son los siguientes";
+  }
+
+  res.status(200).send({
+    code: cod,
+    msg: msg,
+    data: data
+  });
+}
+
+router.route("/getSocial").get(mdl.validateSocial, (req, res) => {
   var type = req.query.type;
-  if (!(lng && srh && nks && type)) {
-    res.send({
-      cod: 9,
-      msg: "Request inválido"
-    });
-    return;
+  var cant = 2;
+  if (Number(type) > 1) {
+    cant = 100;
   }
   var promises = [];
-  var lang = lng.split(",");
-  var networks = nks.split(",");
+  var lang = req.query.lang.split(",");
+  var networks = req.query.networks.split(",");
   var finds = Combinatorics.cartesianProduct(lang, networks).toArray();
-
   for (var i = 0; i < finds.length; i++) {
-    promises.push(getPromise(finds[i][0], finds[i][1], srh, "2"));
+    promises.push(getPromise(finds[i][0], finds[i][1], req.query.search, cant));
     if (i === finds.length - 1) {
       Promise.all(promises)
         .then(function (ress) {
           var rsar = concatResponse(ress);
           var cls = Array(rsar);
-          res.send(getResponse(cls, networks));
-        });
+          handleResponse(res, 1, getResponse(cls, networks));
+        }).catch((err) => {
+          res.send({
+            cod: 0,
+            msg: "Intentar de nuevo , revisar parámetros"
+          });
+        });;
     }
   }
 });
@@ -85,28 +100,39 @@ function getPromise(lang, network, search, limit) {
         return;
       }
       var arch = JSON.parse(body);
+
+      if (!(arch.meta.http_code === 200)) {
+        reject(arch.meta);
+        return;
+      }
       var json = arch.posts;
       var response = [];
-
-      for (var i = 0; i < json.length; i++) {
-        response.push({
-          red: json[i].network,
-          date: json[i].posted,
-          text: json[i].text,
-          url: json[i].url,
-          lang: json[i].lang
-        });
-        if (i === json.length - 1) {
-          resolve(response);
+      if (json.length > 0) {
+        for (var i = 0; i < json.length; i++) {
+          response.push({
+            red: json[i].network,
+            date: json[i].posted,
+            text: json[i].text,
+            url: json[i].url,
+            lang: json[i].lang
+          });
+          if (i === json.length - 1) {
+            resolve(response);
+          }
         }
+      } else {
+        resolve(response);
       }
+
+
     });
   });
 }
 
-router.get('/getNews/:search', function (req, res, next) {
-  var search = req.params.search;
-  console.log(search);
+router.route('/getNews').get(mdl.validateNews, (req, res) => {
+  var search = req.query.search;
+  var type = req.query.type;
+
   request({
     url: 'http://buscamas.pe/' + search + '/',
     method: 'GET',
@@ -123,18 +149,29 @@ router.get('/getNews/:search', function (req, res, next) {
       var str = S(container).collapseWhitespace().s;
       var str2 = S(str).replaceAll('> <', '><').s;
       var json = himalaya.parse(str2);
-      for (var i = 0; i < json.length; i++) {
-        if (i < json.length - 1) {
-          response.push(getNewsResponse(json[i]));
+      if (getTrueSearch(json[0])) {
+        for (var i = 0; i < json.length; i++) {
+          if (i < json.length - 1) {
+            response.push(getNewsResponse(json[i]));
+          }
+          if (i === json.length - 2) {
+            if (response.length > 0) {
+              if (Number(type) === 1) {
+                handleResponse(res, 1, response.slice(0, 9));
+                return;
+              }
+              handleResponse(res, 1, response);
+              return;
+            }
+            handleResponse(res, 1, response);
+          }
         }
-        if (i === json.length - 2) {
-          res.send(response);
-        }
+      } else {
+        handleResponse(res, 1, response);
       }
     }
   });
 });
-
 
 function getNewsResponse(json) {
   try {
@@ -200,4 +237,26 @@ function getNewsResponse(json) {
     };
   }
 }
+
+function getTrueSearch(json) {
+  console.log()
+  try {
+    if (json.children[0].children[0].children[0].children[0].content.search("no produjo") > 0) {
+      return false;
+    } else {
+      return true;
+    }
+  } catch (e) {
+    return true;
+  }
+
+
+}
+
+
+router.get("/test", (req, res) => {
+  res.send("ok");
+});
+
+
 module.exports = router;
